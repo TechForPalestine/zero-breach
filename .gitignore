@@ -30,3 +30,7 @@ SPEC-scanner.md
 REVIEW-*.md
 RELEASE-CANDIDATE-*.md
 
+
+# Desktop app build output (app/zero-breach.spec)
+/app/build/
+/app/dist/

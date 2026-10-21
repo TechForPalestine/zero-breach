@@ -1,0 +1,107 @@
+name: desktop-app
+
+# Builds the self-contained desktop app (no Python needed to run it):
+#   Windows  ZeroBreach-<ver>-windows-x64.exe
+#   macOS    ZeroBreach-<ver>-macos-arm64.zip  (Apple Silicon)
+#            ZeroBreach-<ver>-macos-x64.zip    (Intel)
+# Every build is self-tested on the runner before it is uploaded. On a v* tag the
+# files and their SHA-256 sums are attached to the GitHub release.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths: ["app/**", "scan/adint_scan/**", "iocs/**", "requirements-patterns.txt",
+            ".github/workflows/desktop-app.yml"]
+  pull_request:
+    paths: ["app/**", "scan/adint_scan/**", "iocs/**", "requirements-patterns.txt",
+            ".github/workflows/desktop-app.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          - os: macos-latest
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build tools and the pinned optional pattern engine
+        run: |
+          python -m pip install -r app/requirements-build.txt
+          python -m pip install -r requirements-patterns.txt
+      - name: Check Tk is available
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Read version
+        id: ver
+        shell: bash
+        run: echo "version=$(python -c "import sys; sys.path.insert(0, 'scan'); import adint_scan; print(adint_scan.__version__)")" >> "$GITHUB_OUTPUT"
+      - name: Build
+        run: pyinstaller --noconfirm --clean --distpath app/dist --workpath app/build app/zero-breach.spec
+
+      - name: Self-test and package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ZB_REQUIRE_PATTERNS: "1"
+          ZB_SELF_TEST_OUT: ${{ runner.temp }}\selftest.txt
+        run: |
+          # A windowed .exe detaches from the shell; wait for it explicitly.
+          $p = Start-Process -FilePath app\dist\ZeroBreach.exe -ArgumentList '--self-test' -Wait -PassThru
+          Get-Content $env:ZB_SELF_TEST_OUT
+          if ($p.ExitCode -ne 0) { exit 1 }
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item app\dist\ZeroBreach.exe "out\ZeroBreach-${{ steps.ver.outputs.version }}-${{ matrix.target }}.exe"
+
+      - name: Self-test and package (macOS)
+        if: runner.os == 'macOS'
+        env:
+          ZB_REQUIRE_PATTERNS: "1"
+        run: |
+          "app/dist/Zero Breach.app/Contents/MacOS/ZeroBreach" --self-test
+          mkdir -p out
+          # ditto keeps the bundle's symlinks and code signature intact.
+          ditto -c -k --keepParent "app/dist/Zero Breach.app" \
+            "out/ZeroBreach-${{ steps.ver.outputs.version }}-${{ matrix.target }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zero-breach-${{ matrix.target }}
+          path: out/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+          merge-multiple: true
+      - name: Checksums
+        working-directory: out
+        run: sha256sum * > SHA256SUMS-desktop.txt && cat SHA256SUMS-desktop.txt
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release view "$tag" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$tag" -R "$GITHUB_REPOSITORY" --title "$tag" --notes "Desktop app build for $tag."
+          gh release upload "$tag" out/* -R "$GITHUB_REPOSITORY" --clobber
