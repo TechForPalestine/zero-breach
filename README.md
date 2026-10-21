@@ -81,6 +81,10 @@ browser before scanning so its databases are not locked.
 
 Default checks require Python 3.8 or newer, no administrator and no added packages.
 
+**Desktop app (no Python needed):** Windows and macOS builds with a window,
+`ZeroBreach-<version>-windows-x64.exe` and `ZeroBreach-<version>-macos-*.zip`, are
+attached to releases. They run the same checks; see [app/README.md](app/README.md).
+
 **Single file (simplest):** [download zero-breach.py](https://github.com/interplains/zero-breach/releases/latest/download/zero-breach.py),
 verify it using the [release checksums](https://github.com/interplains/zero-breach/releases/latest),
 then open a terminal in the download folder. On Windows use `python`; on macOS
